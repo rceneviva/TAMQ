@@ -1,0 +1,136 @@
+
+---
+title: "Aula #02 – RCTs e Regressão"
+author: "Curso de Pós-Graduação em Políticas Públicas"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introdução
+
+Neste documento, vamos aplicar os principais conceitos da Aula #02 sobre Inferência Causal usando dois tipos de dados:
+
+1. Dados simulados (para aprender os fundamentos);
+2. Dados reais (para aplicar em contextos empíricos concretos).
+
+Pacotes necessários:
+
+```{r install}
+# Execute esta célula apenas uma vez
+# install.packages(c("ggplot2", "AER", "ivpack", "sandwich", "Matching", "stargazer", "dplyr", "readr", "wooldridge"))
+```
+
+```{r libraries}
+library(ggplot2)
+library(AER)
+library(ivpack)
+library(sandwich)
+library(Matching)
+library(stargazer)
+library(dplyr)
+library(readr)
+library(wooldridge)
+```
+
+# Parte I – Dados Simulados
+
+## Regressão Linear Simples
+
+```{r regsimples}
+set.seed(123)
+n <- 200
+x <- rnorm(n)
+erro <- rnorm(n)
+y <- 2 + 3 * x + erro
+dados1 <- data.frame(x = x, y = y)
+modelo1 <- lm(y ~ x, data = dados1)
+summary(modelo1)
+
+ggplot(dados1, aes(x = x, y = y)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  labs(title = "Regressão Linear Simples", x = "x", y = "y")
+```
+
+## RCT Simulado – Estimando ATE e ITT
+
+```{r rct_ate_itt}
+set.seed(456)
+n <- 400
+tratamento <- rbinom(n, 1, 0.5)
+erro <- rnorm(n, 0, 5)
+Y <- 50 + 5 * tratamento + erro
+dados2 <- data.frame(tratamento = tratamento, Y = Y)
+
+mean(dados2$Y[dados2$tratamento == 1]) - mean(dados2$Y[dados2$tratamento == 0])
+
+modelo_itt <- lm(Y ~ tratamento, data = dados2)
+summary(modelo_itt)
+
+ggplot(dados2, aes(x = as.factor(tratamento), y = Y)) +
+  geom_boxplot() +
+  labs(x = "Grupo (0 = Controle, 1 = Tratamento)", y = "Y")
+```
+
+## Não Conformidade – ITT vs TOT
+
+```{r itt_tot}
+set.seed(789)
+n <- 500
+Z <- rbinom(n, 1, 0.5)
+D <- ifelse(Z == 1, rbinom(n, 1, 0.85), rbinom(n, 1, 0.10))
+erro <- rnorm(n, 0, 5)
+Y <- 50 + 5 * D + erro
+dados3 <- data.frame(Z = Z, D = D, Y = Y)
+
+modelo_itt2 <- lm(Y ~ Z, data = dados3)
+summary(modelo_itt2)
+
+modelo_iv <- ivreg(Y ~ D | Z, data = dados3)
+summary(modelo_iv)
+
+stargazer(modelo1, modelo_itt, modelo_iv, type = "text",
+          title = "Modelos Estimados",
+          column.labels = c("Reg. Simples", "ITT", "TOT"))
+```
+
+# Parte II – Dados Reais
+
+## Bolsa Família e Desempenho Escolar
+
+```{r bolsa-familia}
+# OBS: Atualize o caminho do arquivo conforme necessário
+# dados_bf <- read_csv("caminho/do/arquivo/bolsa_familia.csv")
+
+# # Suponha que já tenha carregado dados_bf:
+# dados_bf <- dados_bf %>%
+#   filter(idade >= 6 & idade <= 14) %>%
+#   select(aprovado, bolsafamilia, idade, sexo, escola_id)
+
+# modelo_bf1 <- lm(aprovado ~ bolsafamilia, data = dados_bf)
+# modelo_bf2 <- lm(aprovado ~ bolsafamilia + idade + sexo, data = dados_bf)
+
+# stargazer(modelo_bf1, modelo_bf2, type = "text")
+```
+
+## ATT com pareamento (wage1)
+
+```{r att_matching}
+data("wage1", package = "wooldridge")
+dados_wage <- wage1
+
+att_out <- Match(Y = dados_wage$wage, Tr = dados_wage$hsgrad,
+                 X = dados_wage$exper, M = 1)
+summary(att_out)
+
+modelo_att <- lm(wage ~ hsgrad + exper + tenure + age, data = dados_wage)
+summary(modelo_att)
+```
+
+# Conclusão
+
+Este relatório mostrou como aplicar modelos de regressão e métodos de inferência causal com dados simulados e reais. Siga com os demais exercícios adaptando o código apresentado aqui.
+

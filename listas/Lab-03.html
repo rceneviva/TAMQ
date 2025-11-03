@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8"/>
+<title>UFABC • GIS em Políticas Públicas — Prévia didática (HTML)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<style>
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;line-height:1.6;max-width:1000px;margin:40px auto;padding:0 20px;color:#111}
+  h1,h2,h3{line-height:1.25}
+  code,pre{background:#f6f8fa;border:1px solid #e1e4e8;border-radius:6px;padding:2px 4px}
+  pre{padding:12px;overflow:auto}
+  .table{border-collapse:collapse;margin:8px 0;width:100%}
+  .table th,.table td{border:1px solid #ddd;padding:6px 8px;text-align:left;vertical-align:top}
+  .note{background:#fff3cd;border:1px solid #ffeeba;border-radius:6px;padding:10px;margin:12px 0}
+  .tip{background:#e8f5e9;border:1px solid #c8e6c9;border-radius:6px;padding:10px;margin:12px 0}
+  .warn{background:#ffebee;border:1px solid #ffcdd2;border-radius:6px;padding:10px;margin:12px 0}
+  .small{color:#555}
+  hr{border:none;border-top:1px solid #e5e5e5;margin:28px 0}
+  @media print {
+    a[href]:after{content:""}
+    body{margin:10mm auto}
+  }
+</style>
+</head>
+<body>
+<h1>UFABC • GIS em Políticas Públicas — Prévia didática (HTML)</h1>
+<p class="small">Este material apresenta o <strong>código R</strong> e <strong>comentários detalhados</strong> sobre os <em>resultados e mapas</em> esperados para uso em aula, sem depender de execução ao vivo. Para reproduções oficiais, utilize o arquivo <code>Solucoes_Completas_UFABC.Rmd</code> no R/RStudio.</p>
+
+<div class="note"><strong>Observação pedagógica.</strong> Esta prévia explica, em linguagem aplicada, o que cada mapa e cada estatístico mostra e como interpretar em termos de políticas públicas. Útil para projetar em sala, guiar discussões e anotar.</div>
+
+<hr/>
+
+<h2>Trilha 1 — Diagnóstico territorial (Educação)</h2>
+<p>Objetivo: medir pressão por oferta educacional, localizar <em>hotspots</em> e priorizar territórios. O produto principal são <strong>mapas coropléticos</strong> (déficit) e um <strong>mapa bivariado</strong> (déficit × renda).</p>
+
+<h3>Script R essencial</h3>
+<pre><code class="language-r">
+library(sf); library(dplyr); library(tmap); library(classInt)
+
+# Carregamento
+grid &lt;- st_read(file.path(data_dir, "grid_500m.geojson"), quiet = TRUE)
+sch  &lt;- st_read(file.path(data_dir, "schools_sim.geojson"), quiet = TRUE)
+
+# Indicadores (básico)
+g &lt;- grid |&gt;
+  mutate(deficit = pop_5_14 - vagas,
+         raz_vagas_pc = vagas / pmax(pop_5_14, 1))
+
+# Coroplético de déficit (quintis)
+# tm_shape(g) + tm_polygons("deficit", style="quantile", n=5)
+
+# Hotspots (top 10%)
+cutoff  &lt;- quantile(g$deficit, 0.90, na.rm = TRUE)
+hotspot &lt;- g |&gt; mutate(hot = deficit &gt;= cutoff)
+
+# Intermediário: agregar escolas às células (capacidade)
+j  &lt;- st_join(grid[, c("i","j")], sch["cap"], join = st_contains)
+cap &lt;- j |&gt; st_drop_geometry() |&gt; group_by(i,j) |&gt; summarise(cap = sum(cap, na.rm=TRUE), .groups="drop")
+g2 &lt;- grid |&gt; left_join(cap, by=c("i","j")) |&gt; mutate(cap=ifelse(is.na(cap),0,cap), deficit_pt = pop_5_14 - cap)
+
+# Avançado (opcional): OSM (amenity=school) e contagem por célula
+</code></pre>
+
+<h3>O que os mapas mostram e como interpretar</h3>
+<table class="table">
+  <thead><tr><th>Saída</th><th>Leitura didática</th><th>Aplicação em política</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Coroplético de <code>deficit</code> (quintis)</td>
+      <td>Classes ordenam da menor à maior pressão por vagas. Áreas em quantis superiores indicam maior descompasso entre demanda (pop 5–14) e oferta (vagas).</td>
+      <td>Base para <em>priorização territorial</em>: direcionar novas turmas, obras e transporte escolar para células de maior déficit.</td>
+    </tr>
+    <tr>
+      <td>Mapa de <em>hotspots</em> (top 10%)</td>
+      <td>Marca as 10% piores células. Útil para focalizar atenção do gestor e abrir diagnóstico qualitativo in loco.</td>
+      <td>Roteirização de visitas técnicas; construção de portfólio de projetos.</td>
+    </tr>
+    <tr>
+      <td>Mapa <strong>bivariado</strong> (déficit × renda, tercis)</td>
+      <td>Quadrante crítico: <em>alto déficit / baixa renda</em>. Indica dupla desvantagem e risco de ampliação de desigualdades educacionais.</td>
+      <td>Justifica ações redistributivas (novas vagas públicas, cotas territoriais de investimento, transporte escolar gratuito).</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="tip"><strong>Boas práticas.</strong> Documente método de discretização (quantis, “natural breaks”) e discuta MAUP. Em células com população muito baixa, a razão vagas/pop pode inflar; considere filtros mínimos ou suavização.</div>
+
+<hr/>
+
+<h2>Trilha 2 — Dependência espacial e regressão (Segurança Pública)</h2>
+<p>Objetivo: detectar autocorrelação espacial (Moran/LISA) e ajustar modelos SAR (SLM/SEM) para melhorar inferência. O produto visual são mapas de <strong>clusters LISA</strong> e tabelas de regressão comparando OLS vs SLM/SEM.</p>
+
+<h3>Script R essencial</h3>
+<pre><code class="language-r">
+library(sf); library(spdep); library(spatialreg); library(tmap)
+
+grid &lt;- st_read(file.path(data_dir,"grid_500m.geojson"), quiet=TRUE)
+
+# Matriz de vizinhança (Queen)
+nb &lt;- poly2nb(as_Spatial(grid))
+lw &lt;- nb2listw(nb, style = "W")
+
+# Moran global e LISA
+m_global &lt;- moran.test(grid$crime, lw)
+lisa     &lt;- localmoran(grid$crime, lw)
+
+# OLS e testes LM
+ols &lt;- lm(crime ~ renda + pop_5_14, data = st_drop_geometry(grid))
+lmtests &lt;- lm.LMtests(ols, lw, test = c("LMerr","LMlag","RLMerr","RLMlag","SARMA"))
+
+# Modelos espaciais
+slm &lt;- lagsarlm(crime ~ renda + pop_5_14, data = st_drop_geometry(grid), listw = lw)
+sem &lt;- errorsarlm(crime ~ renda + pop_5_14, data = st_drop_geometry(grid), listw = lw)
+</code></pre>
+
+<h3>O que os mapas e estatísticos mostram</h3>
+<table class="table">
+  <thead><tr><th>Saída</th><th>Leitura didática</th><th>Aplicação</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Moran global</strong> do crime</td>
+      <td>Valor positivo indica aglomeração (semelhança espacial). Ex.: bairros com crime alto próximos a outros com crime alto.</td>
+      <td>Justifica modelagem espacial. Evita viés em OLS e subestimação de erros-padrão.</td>
+    </tr>
+    <tr>
+      <td>Mapa <strong>LISA</strong> (HH, LL, HL, LH)</td>
+      <td>Localiza aglomerados (HH/LL) e outliers (HL/LH). A significância (p&lt;0,05) vem da LISA.</td>
+      <td>Focaliza intervenções territoriais (patrulhamento, iluminação) e prevenção integrada em áreas HH.</td>
+    </tr>
+    <tr>
+      <td>Comparação OLS × SLM × SEM</td>
+      <td>Se LM-lag for significativo, prefira SLM (difusão). Se LM-error for significativo, prefira SEM (choque comum não observado). Compare AIC e Moran dos resíduos.</td>
+      <td>Melhora inferência para avaliar políticas de segurança e evitar conclusões espúrias.</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="tip"><strong>Escolha substantiva do W.</strong> Queen captura vizinhança contígua; k-NN padroniza grau. Relate sensibilidade dos resultados à escolha de W.</div>
+
+<hr/>
+
+<h2>Trilha 3 — Acessibilidade e rotas sensíveis a risco (Educação &amp; Segurança)</h2>
+<p>Objetivo: comparar rota “mais curta” com rota que <strong>penaliza risco</strong> por segmento. O produto são tabelas comparando distância vs exposição a risco para diferentes valores de <code>α</code> e um <em>mapa de segmentos críticos</em> (evitáveis/inevitáveis).</p>
+
+<h3>Script R essencial</h3>
+<pre><code class="language-r">
+library(sf); library(igraph); library(dplyr); library(tmap)
+
+edges &lt;- st_read(file.path(data_dir,"network_edges.geojson"), quiet=TRUE)
+nodes &lt;- st_read(file.path(data_dir,"network_nodes.geojson"), quiet=TRUE)
+orig  &lt;- st_read(file.path(data_dir,"origins.geojson"), quiet=TRUE)
+sch   &lt;- st_read(file.path(data_dir,"schools_sim.geojson"), quiet=TRUE)
+
+# Projeção métrica (UTM 23S)
+crs_m &lt;- 31983
+edges_m &lt;- st_transform(edges, crs_m); edges_m$dist_m &lt;- as.numeric(st_length(edges_m))
+nodes_m &lt;- st_transform(nodes, crs_m); orig_m &lt;- st_transform(orig, crs_m); sch_m &lt;- st_transform(sch, crs_m)
+
+# Grafo e custos
+g &lt;- graph_from_data_frame(d = data.frame(from=edges_m$u, to=edges_m$v, dist=edges_m$dist_m, risk=edges_m$risk),
+                           directed=FALSE)
+
+# Rota curta:        w = dist
+# Rota "segura":     w = dist + α * risk
+</code></pre>
+
+<h3>O que as tabelas e mapas mostram</h3>
+<table class="table">
+  <thead><tr><th>Saída</th><th>Leitura didática</th><th>Aplicação</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Tabela por <code>α</code> (0,3; 0,6; 1,0)</td>
+      <td>Relata Δ% de distância vs rota curta e Δ de exposição média ao risco. Mostra o <em>trade-off</em> tempo × segurança.</td>
+      <td>Suporta escolha de <code>α</code> (aversão social ao risco) em diálogo com gestores e comunidade.</td>
+    </tr>
+    <tr>
+      <td>Mapa de segmentos (evitáveis/inevitáveis)</td>
+      <td>“Inevitáveis” com risco alto criam gargalos de segurança. “Evitáveis” sinalizam rotas alternativas.</td>
+      <td>Priorização de obras (iluminação, travessias, calçadas) e logística (transporte escolar, rotas de ônibus).</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="warn"><strong>Ética e transparência.</strong> Variáveis de risco devem vir de fontes confiáveis e auditáveis. Evite proxies estigmatizantes. Documente ponderações e impactos distributivos.</div>
+
+<hr/>
+
+<h2>Anotações gerais para a aula</h2>
+<ul>
+  <li><strong>Cartografia responsável.</strong> Discretização, cores, legendas e fontes alteram percepção do mapa. Documente escolhas.</li>
+  <li><strong>Estatística espacial.</strong> Moran/LISA guiam diagnóstico. Modelos espaciais corrigem inferência quando há dependência.</li>
+  <li><strong>Acessibilidade.</strong> Parametrizações de custo (tempo, risco, tarifa) devem refletir objetivos de política.</li>
+  <li><strong>Reprodutibilidade.</strong> Fixe semente, registre versões de pacotes, salve mapas com metadados.</li>
+</ul>
+
+<p class="small">Para executar os scripts e obter os mapas e números exatos, renderize o <code>.Rmd</code> fornecido (ou peça os notebooks/Rmd do pacote de atividades).</p>
+</body>
+</html>

@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<title>Laboratório de Análise de Redes Sociais (ARS) — Gabarito (HTML)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+ body{font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif; margin: 2rem; line-height: 1.5; color: #222;}
+ h1,h2,h3{color:#0B6E4F;}
+ code, pre{background:#f7f7f7; border:1px solid #e5e5e5; border-radius:6px;}
+ pre{padding:1rem; overflow:auto;}
+ .note{background:#fffbe6; border-left:4px solid #f0c36d; padding:0.75rem 1rem; border-radius:4px;}
+ .section{margin-bottom:2rem;}
+ .caption{color:#555; font-style: italic;}
+</style>
+</head>
+<body>
+<h1>Laboratório de Análise de Redes Sociais (ARS) — Gabarito com R</h1>
+<p><strong>Autor:</strong> PPG-PP — UFABC</p>
+<p class="note"><strong>Nota:</strong> Esta versão HTML é apenas uma visualização estática do conteúdo do R Markdown. Ela <em>não</em> executa os blocos de código R nem exibe as saídas calculadas. Para ver resultados e gráficos, baixe e renderize o arquivo <code>.Rmd</code> no RStudio/Quarto.</p>
+
+<div class="section">
+<h2>R Markdown (conteúdo)</h2>
+<p class="caption">Abaixo segue o conteúdo integral do arquivo <code>.Rmd</code> correspondente.</p>
+<pre><code>
+---
+title: "Laboratório de Análise de Redes Sociais (ARS) — Gabarito com R"
+author: "PPG-PP — UFABC"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: false
+    df_print: paged
+fontsize: 12pt
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.width = 8, fig.height = 5)
+set.seed(12345)  # Reprodutibilidade
+```
+
+## Pacotes
+
+> Observação: `igraph` é essencial. `tidygraph`/`ggraph` e `tidyverse` facilitam tabelas e gráficos. Se algum pacote não estiver instalado, descomente a linha `install.packages()`.
+
+```{r packages}
+# install.packages(c("igraph","tidygraph","ggraph","tidyverse","knitr","kableExtra","patchwork"))
+library(igraph)
+library(tidygraph)
+library(ggraph)
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(patchwork)   # para combinar gráficos com operador |
+```
+
+## Funções auxiliares
+
+```{r helpers}
+# Z-score seguro (retorna numérico simples)
+zscore <- function(x) as.numeric(scale(x))
+
+# Tabela bonita
+kbl2 <- function(df, caption = NULL){
+  kbl(df, caption = caption, digits = 3) |>
+    kable_styling(full_width = FALSE, bootstrap_options = c("striped","hover"))
+}
+
+# Resumo global de uma rede (direcionada ou não)
+resumo_rede <- function(g){
+  tibble(
+    nos = gorder(g),
+    arestas = gsize(g),
+    componentes = components(g)$no,
+    densidade = edge_density(g, loops = FALSE),
+    diametro = suppressWarnings(diameter(g, directed = is_directed(g), weights = NA)), # sem pesos
+    dist_media = suppressWarnings(mean_distance(g, directed = is_directed(g)))
+  )
+}
+
+# Ranking helper
+ranking <- function(vec, n = 5, nome = "valor"){
+  tibble(no = names(vec), !!nome := as.numeric(vec)) |>
+    arrange(desc(.data[[nome]])) |>
+    slice_head(n = n)
+}
+```
+
+---
+
+# Exercício 1 — Rede básica e métricas descritivas
+
+**Objetivo.** Familiaridade com objetos de rede e medidas globais.
+
+**Dados.** Rede Erdős–Rényi (1-modo), ~40 nós, probabilidade de ligação baixa (0,05–0,08).
+
+```{r ex1-sim}
+# Simulação ER (G(n,p))
+n1 <- 40
+p1 <- 0.07
+g1 <- sample_gnp(n = n1, p = p1, directed = FALSE, loops = FALSE)
+
+# Métricas globais
+tab1 <- resumo_rede(g1)
+kbl2(tab1, caption = "Exercício 1 — Métricas globais (ER)")
+```
+
+```{r ex1-plot}
+# Tamanho do nó proporcional ao grau
+deg1 <- degree(g1)
+ggraph(g1, layout = "fr") +
+  geom_edge_link(alpha = .25) +
+  geom_node_point(aes(size = deg1), color = "#0B6E4F") +
+  scale_size_continuous(name = "Grau") +
+  theme_graph()
+```
+
+**Interpretação.**  
+Densidade baixa sugere **difusão mais lenta** e maior distância média; o diâmetro indica o pior caso de alcance. O desenho ER produz heterogeneidade limitada de graus, então **hubs** marcantes não devem aparecer.
+
+---
+
+# Exercício 2 — Três topologias: aleatória, small-world e scale-free
+
+**Objetivo.** Comparar estruturas com impacto em difusão e resiliência.
+
+```{r ex2-sim}
+n2 <- 80
+
+# (a) Aleatória ER
+p2 <- 0.04
+g2_er <- sample_gnp(n = n2, p = p2)
+
+# (b) Small-world (Watts-Strogatz): anel k vizinhos, prob. de rewire
+dim <- 1; nei <- 4; p_rewire <- 0.05
+g2_sw <- sample_smallworld(dim = dim, size = n2, nei = nei, p = p_rewire)
+
+# (c) Scale-free (Barabási-Albert)
+m <- 2  # novas arestas por nó
+g2_sf <- sample_pa(n = n2, power = 1, m = m, directed = FALSE)
+
+# Métricas comparativas
+cmp <- bind_rows(
+  resumo_rede(g2_er) |> mutate(rede = "ER"),
+  resumo_rede(g2_sw) |> mutate(rede = "Small-world"),
+  resumo_rede(g2_sf) |> mutate(rede = "Scale-free")
+) |>
+  relocate(rede)
+
+kbl2(cmp, caption = "Exercício 2 — Comparação de métricas globais")
+```
+
+```{r ex2-degree}
+# Distribuição de grau para cada rede
+plot_degree <- function(g, titulo){
+  dg <- degree(g)
+  tibble(grau = dg) |>
+    ggplot(aes(grau)) + geom_histogram(binwidth = 1, color = "white") +
+    labs(title = titulo, x = "Grau", y = "Frequência") +
+    theme_minimal()
+}
+plot_degree(g2_er, "ER") |
+  plot_degree(g2_sw, "Small-world") |
+  plot_degree(g2_sf, "Scale-free")
+```
+
+**Interpretação.**  
+Small-world tende a **alta clusterização** com **caminhos curtos**; ER serve de referência; scale-free exibe **cauda pesada de graus** (hubs). Difusão costuma ser rápida em **small-world** e **scale-free**, mas a última é **frágil** a falhas direcionadas em hubs.
+
+---
+
+# Exercício 3 — Centralidades: grau, betweenness, closeness, autovetor
+
+**Objetivo.** Diferenciar papéis na rede small-world.
+
+```{r ex3-cent}
+g <- g2_sw
+deg  <- degree(g)
+bet  <- betweenness(g, directed = FALSE)
+clo  <- closeness(g, normalized = TRUE)
+eig  <- eigen_centrality(g)$vector
+
+tab_deg <- ranking(deg, 5, "grau")
+tab_bet <- ranking(bet, 5, "betweenness")
+tab_clo <- ranking(clo, 5, "closeness")
+tab_eig <- ranking(eig, 5, "eigenvector")
+
+kbl2(tab_deg, caption = "Top-5 — Grau")
+kbl2(tab_bet, caption = "Top-5 — Betweenness")
+kbl2(tab_clo, caption = "Top-5 — Closeness")
+kbl2(tab_eig, caption = "Top-5 — Autovetor (prestígio por associação)")
+```
+
+**Interpretação.**  
+• **Grau** ≈ acesso imediato. • **Betweenness** identifica **corretores/gargalos**. • **Closeness** mede **alcance rápido**. • **Autovetor** detecta **prestígio estrutural** por associação com nós centrais. Os quatro rankings **não** precisam coincidir.
+
+---
+
+# Exercício 4 — Tríades, fechamento e comunidades
+
+**Objetivo.** Relacionar microestrutura e módulos.
+
+```{r ex4-comm}
+# Escolha uma rede (usamos small-world)
+g <- g2_sw
+
+# Transitividade/fechamento triádico (global)
+trans <- transitivity(g, type = "global")
+
+# Comunidades (Louvain) — requer grafo não direcionado e pesos >= 0
+com <- cluster_louvain(g)
+mod <- modularity(g, membership = membership(com))
+
+tibble(
+  transitividade = trans,
+  comunidades = length(unique(membership(com))),
+  modularidade = mod
+) |> kbl2("Exercício 4 — Tríades e comunidades (Louvain)")
+```
+
+```{r ex4-plot}
+# Visual: cores por comunidade
+V(g)$com <- factor(membership(com))
+ggraph(g, layout = "fr") +
+  geom_edge_link(alpha = .15) +
+  geom_node_point(aes(color = com), size = 3) +
+  theme_graph() + guides(color = guide_legend(title = "Comunidade"))
+```
+
+**Interpretação.**  
+Transitividade alta sugere **fechamento triádico** (confiança/monitoramento local). Modularidade alta indica **silos/coalizões**; a política pode **criar pontes** para reduzir distância média entre comunidades.
+
+---
+
+# Exercício 5 — Atributos e homofilia
+
+**Objetivo.** Medir assortatividade por **setor** e **nível**.
+
+```{r ex5-attrs}
+set.seed(321)
+g <- g2_sw
+# Atributos simulados
+sector_vals <- c("Saúde","Educação","Assistência")
+level_vals  <- c("Municipal","Estadual")
+
+V(g)$setor <- sample(sector_vals, gorder(g), replace = TRUE, prob = c(.4,.35,.25))
+V(g)$nivel <- sample(level_vals,  gorder(g), replace = TRUE, prob = c(.7,.3))
+
+# Assortatividade nominal requer vetor numérico de categorias
+assort_setor <- assortativity_nominal(g, as.integer(factor(V(g)$setor)), directed = FALSE)
+assort_nivel <- assortativity_nominal(g, as.integer(factor(V(g)$nivel)), directed = FALSE)
+
+tibble(medida = c("Assortatividade (setor)","Assortatividade (nível)"),
+       valor  = c(assort_setor, assort_nivel)) |>
+  kbl2("Exercício 5 — Assortatividade")
+```
+
+```{r ex5-mixing}
+# Tabelas de mistura (contagens por atributo nas arestas)
+ends_mat <- ends(g, E(g))
+mix_setor <- table(V(g)$setor[ends_mat[,1]], V(g)$setor[ends_mat[,2]])
+mix_nivel <- table(V(g)$nivel[ends_mat[,1]], V(g)$nivel[ends_mat[,2]])
+
+kbl2(as.data.frame.matrix(mix_setor), "Matriz de mistura por Setor (contagens de arestas)")
+kbl2(as.data.frame.matrix(mix_nivel), "Matriz de mistura por Nível (contagens de arestas)")
+```
+
+**Interpretação.**  
+Valores positivos sugerem **homofilia** (ligações entre iguais). Se a meta é integração, procure **bridging** entre categorias distintas.
+
+---
+
+# Exercício 6 — Ego-redes: coesão local vs. novidade
+
+**Objetivo.** Comparar ambientes relacionais de um **hub** e de um **periférico**.
+
+```{r ex6-ego}
+g <- g2_sf
+deg <- degree(g)
+hub <- which.max(deg)
+per <- which.min(deg)
+
+ego_h <- induced_subgraph(g, ego(g, order = 1, nodes = hub)[[1]])
+ego_p <- induced_subgraph(g, ego(g, order = 1, nodes = per)[[1]])
+
+cmp_ego <- tibble(
+  ego = c("Hub","Periférico"),
+  nos = c(gorder(ego_h), gorder(ego_p)),
+  densidade = c(edge_density(ego_h), edge_density(ego_p)),
+  clustering = c(transitivity(ego_h, type = "global"), transitivity(ego_p, type = "global"))
+)
+kbl2(cmp_ego, "Exercício 6 — Comparação de ego-redes (1 passo)")
+```
+
+**Interpretação.**  
+Ego-rede **densa/fechada** favorece **confiança e coordenação local**; ego-rede **rala** com conexões externas tende a aportar **informação nova**.
+
+---
+
+# Exercício 7 — Rede bipartida (2-modos) e projeção por afiliação
+
+**Objetivo.** Simular **município × consórcio** e projetar no modo municípios.
+
+```{r ex7-bipartite}
+set.seed(2024)
+n_mun <- 60
+n_cons <- 8
+# 4 "regiões" para municípios (afeta probabilidade de afiliação)
+regioes <- paste0("R",1:4)
+mun_reg <- sample(regioes, n_mun, replace = TRUE, prob = c(.25,.25,.25,.25))
+cons_reg <- sample(regioes, n_cons, replace = TRUE)  # rótulo de região do consórcio
+
+# Probabilidades: mais alta quando município e consórcio compartilham "região"
+P_same <- 0.40; P_diff <- 0.10
+edges <- list()
+for(i in 1:n_mun){
+  for(j in 1*n_cons){
+    p <- ifelse(mun_reg[i] == cons_reg[j], P_same, P_diff)
+    if(runif(1) < p) edges <- append(edges, list(c(i, n_mun + j)))
+  }
+}
+edgemat <- do.call(rbind, edges)
+
+g_bi <- graph_from_edgelist(edgemat, directed = FALSE)
+V(g_bi)$type <- c(rep(TRUE, n_mun), rep(FALSE, n_cons))  # TRUE=município, FALSE=consórcio
+V(g_bi)$nome <- c(paste0("M",1:n_mun), paste0("C",1:n_cons))
+V(g_bi)$regiao <- c(mun_reg, cons_reg)
+
+# Checagem de graus por modo
+deg_mun  <- degree(g_bi, v = V(g_bi)[V(g_bi)$type == TRUE])
+deg_cons <- degree(g_bi, v = V(g_bi)[V(g_bi)$type == FALSE])
+
+tibble(modo = c("Municípios","Consórcios"),
+       media_grau = c(mean(deg_mun), mean(deg_cons))) |>
+  kbl2("Exercício 7 — Grau médio por modo (bipartida)")
+```
+
+```{r ex7-proj}
+# Projeções (retornam dois grafos: modo TRUE e modo FALSE)
+proj <- bipartite_projection(g_bi, multiplicity = TRUE)
+g_mun_proj <- proj[[1]]  # projeção no modo municípios
+E(g_mun_proj)$weight[is.na(E(g_mun_proj)$weight)] <- 0
+
+# Betweenness na projeção (não usamos pesos como distância aqui)
+bet_mun <- betweenness(g_mun_proj)
+top_ponte <- ranking(bet_mun, 5, "betweenness")
+kbl2(top_ponte, "Exercício 7 — Municípios-ponte na projeção")
+```
+
+```{r ex7-plot}
+ggraph(g_mun_proj, layout = "fr") +
+  geom_edge_link(aes(width = weight), alpha = .2) +
+  scale_edge_width_continuous(name = "Afiliações compartilhadas") +
+  geom_node_point(color = "#0B6E4F", size = 2) +
+  theme_graph()
+```
+
+**Interpretação.**  
+Municípios com **alta betweenness** na projeção conectam **regiões** e podem **reduzir desigualdades de acesso** quando mobilizados como **atores-ponte**.
+
+---
+
+# Exercício 8 — Robustez: remover hubs vs. adicionar pontes
+
+**Objetivo.** Comparar resiliência sob duas intervenções.
+
+```{r ex8-robust}
+g <- g2_sf
+
+# Baseline
+base <- resumo_rede(g) |> mutate(cenario = "Base")
+
+# (A) Remover top 5% por betweenness
+bt <- betweenness(g)
+k <- ceiling(0.05 * gorder(g))
+rm_nodes <- names(sort(bt, decreasing = TRUE))[1:k]
+g_rm <- delete_vertices(g, rm_nodes)
+
+A <- resumo_rede(g_rm) |> mutate(cenario = "Remover hubs (5%)")
+
+# (B) Adicionar 10 pontes entre comunidades (usando comunidades de Louvain da rede base)
+com <- cluster_louvain(g)
+mem <- membership(com)
+set.seed(99)
+add_pairs <- list()
+count <- 0
+while(count < 10){
+  # sorteia dois nós de comunidades diferentes
+  pair_vs <- sample(V(g), 2)
+  idx <- as.integer(pair_vs)
+  if(mem[idx[1]] != mem[idx[2]] && !are.connected(g, idx[1], idx[2])){
+    add_pairs[[length(add_pairs)+1]] <- idx
+    g <- add_edges(g, idx)
+    count <- count + 1
+  }
+}
+
+B <- resumo_rede(g) |> mutate(cenario = "Adicionar 10 pontes")
+
+bind_rows(base, A, B) |>
+  relocate(cenario) |>
+  kbl2("Exercício 8 — Comparação de cenários (robustez)")
+```
+
+**Interpretação.**  
+Remover hubs tende a **fragmentar** e **aumentar distâncias**; adicionar **pontes intercomunidades** reduz **distância média** e **dependência** de poucos nós — melhora a **robustez**.
+
+---
+
+# Exercício 9 (Opcional) — Rede direcionada e PageRank
+
+**Objetivo.** Diferenciar **popularidade** (in-degree) de **autoridade** (PageRank).
+
+```{r ex9-dir}
+set.seed(777)
+n <- 80
+g_dir <- sample_pa(n = n, power = 1, m = 2, directed = TRUE)  # preferencial direcionado
+
+indeg <- degree(g_dir, mode = "in")
+pr    <- page_rank(g_dir, directed = TRUE)$vector
+
+top_in  <- ranking(indeg, 10, "in_degree")
+top_pr  <- ranking(pr, 10, "pagerank")
+
+kbl2(top_in, "Top-10 — In-degree")
+kbl2(top_pr, "Top-10 — PageRank")
+```
+
+**Interpretação.**  
+Um nó pode ter **muito in-degree** (popularidade) sem ser “**autoridade**” na estrutura (PageRank), e vice-versa. Para **comunicação governamental**, priorize nós com **alto PageRank** para **alcance indireto** mais eficaz.
+
+---
+
+# Checklist de entrega
+
+**Entregue:**
+1) Métricas globais das redes simuladas;  
+2) Rankings de centralidades; número de comunidades e modularidade; assortatividade por atributos;  
+3) Duas recomendações de **redesign** de rede (pontes a criar; desconcentração de hubs) com justificativas baseadas nas métrricas;  
+4) Uma observação de **ética/privacidade** aplicável a um caso real análogo (o que não publicar e por quê).
+
+---
+
+## Observações finais
+
+- Foque sempre em **traduzir métricas em implicações de política**: coordenação, difusão, silos, gargalos, vulnerabilidade.  
+- Registre **parâmetros de simulação** para reprodutibilidade (`set.seed`, `n`, `p`, etc.).  
+- Gráficos são meios, não fins: priorize os que ajudam a **explicar** resultados (tamanho por grau, cores por comunidade, espessura por peso).
+</code></pre>
+</div>
+
+</body>
+</html>
